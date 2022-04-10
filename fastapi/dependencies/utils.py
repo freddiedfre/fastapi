@@ -55,10 +55,7 @@ def get_param_sub_dependant(
     *, param: inspect.Parameter, path: str, security_scopes: List[str] = None
 ) -> Dependant:
     depends: params.Depends = param.default
-    if depends.dependency:
-        dependency = depends.dependency
-    else:
-        dependency = param.annotation
+    dependency = depends.dependency or param.annotation
     return get_sub_dependant(
         depends=depends,
         dependency=dependency,
@@ -151,9 +148,10 @@ def is_scalar_field(field: Field) -> bool:
         and not isinstance(field.schema, params.Body)
     ):
         return False
-    if field.sub_fields:
-        if not all(is_scalar_field(f) for f in field.sub_fields):
-            return False
+    if field.sub_fields and not all(
+        is_scalar_field(f) for f in field.sub_fields
+    ):
+        return False
     return True
 
 
@@ -201,7 +199,8 @@ def get_dependant(
             ), "Path params must have no defaults or use Path(...)"
             assert is_scalar_field(
                 field=param_field
-            ), f"Path params must be of one of the supported types"
+            ), "Path params must be of one of the supported types"
+
             param_field = get_param_field(
                 param=param,
                 default_schema=params.Path,
@@ -251,7 +250,7 @@ def get_param_field(
 ) -> Field:
     default_value = Required
     had_schema = False
-    if not param.default == param.empty:
+    if param.default != param.empty:
         default_value = param.default
     if isinstance(default_value, Schema):
         had_schema = True
@@ -265,7 +264,7 @@ def get_param_field(
         schema = default_schema(default_value)
     required = default_value == Required
     annotation: Any = Any
-    if not param.annotation == param.empty:
+    if param.annotation != param.empty:
         annotation = param.annotation
     annotation = get_annotation_from_schema(annotation, schema)
     if not schema.alias and getattr(schema, "convert_underscores", None):
@@ -399,10 +398,10 @@ async def solve_dependencies(
     cookie_values, cookie_errors = request_params_to_args(
         dependant.cookie_params, request.cookies
     )
-    values.update(path_values)
+    values |= path_values
     values.update(query_values)
-    values.update(header_values)
-    values.update(cookie_values)
+    values |= header_values
+    values |= cookie_values
     errors += path_errors + query_errors + header_errors + cookie_errors
     if dependant.body_params:
         body_values, body_errors = await request_body_to_args(  # type: ignore # body_params checked above
@@ -554,7 +553,7 @@ def get_body_field(*, dependant: Dependant, name: str) -> Optional[Field]:
     embed = getattr(first_param.schema, "embed", None)
     if len(flat_dependant.body_params) == 1 and not embed:
         return get_schema_compatible_field(field=first_param)
-    model_name = "Body_" + name
+    model_name = f"Body_{name}"
     BodyModel = create_model(model_name)
     for f in flat_dependant.body_params:
         BodyModel.__fields__[f.name] = get_schema_compatible_field(field=f)
@@ -576,7 +575,7 @@ def get_body_field(*, dependant: Dependant, name: str) -> Optional[Field]:
         if len(set(body_param_media_types)) == 1:
             BodySchema_kwargs["media_type"] = body_param_media_types[0]
 
-    field = Field(
+    return Field(
         name="body",
         type_=BodyModel,
         default=None,
@@ -586,4 +585,3 @@ def get_body_field(*, dependant: Dependant, name: str) -> Optional[Field]:
         alias="body",
         schema=BodySchema(**BodySchema_kwargs),
     )
-    return field

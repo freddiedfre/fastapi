@@ -38,10 +38,11 @@ validation_error_response_definition = {
         "detail": {
             "title": "Detail",
             "type": "array",
-            "items": {"$ref": REF_PREFIX + "ValidationError"},
+            "items": {"$ref": f'{REF_PREFIX}ValidationError'},
         }
     },
 }
+
 
 status_code_ranges: Dict[str, str] = {
     "1XX": "Information",
@@ -126,9 +127,7 @@ def generate_operation_id(*, route: routing.APIRoute, method: str) -> str:
 
 
 def generate_operation_summary(*, route: routing.APIRoute, method: str) -> str:
-    if route.summary:
-        return route.summary
-    return route.name.replace("_", " ").title()
+    return route.summary or route.name.replace("_", " ").title()
 
 
 def get_openapi_operation_metadata(*, route: routing.APIRoute, method: str) -> Dict:
@@ -162,25 +161,25 @@ def get_openapi_path(
             if operation_security:
                 operation.setdefault("security", []).extend(operation_security)
             if security_definitions:
-                security_schemes.update(security_definitions)
+                security_schemes |= security_definitions
             all_route_params = get_openapi_params(route.dependant)
             operation_parameters = get_openapi_operation_parameters(all_route_params)
             parameters.extend(operation_parameters)
             if parameters:
                 operation["parameters"] = parameters
             if method in METHODS_WITH_BODY:
-                request_body_oai = get_openapi_operation_request_body(
+                if request_body_oai := get_openapi_operation_request_body(
                     body_field=route.body_field, model_name_map=model_name_map
-                )
-                if request_body_oai:
+                ):
                     operation["requestBody"] = request_body_oai
             if route.responses:
                 for (additional_status_code, response) in route.responses.items():
                     assert isinstance(
                         response, dict
                     ), "An additional response must be a dict"
-                    field = route.response_fields.get(additional_status_code)
-                    if field:
+                    if field := route.response_fields.get(
+                        additional_status_code
+                    ):
                         response_schema, _, _ = field_schema(
                             field, model_name_map=model_name_map, ref_prefix=REF_PREFIX
                         )
@@ -218,11 +217,9 @@ def get_openapi_path(
             ] = response_schema
 
             http422 = str(HTTP_422_UNPROCESSABLE_ENTITY)
-            if (all_route_params or route.body_field) and not any(
-                [
-                    status in operation["responses"]
-                    for status in [http422, "4xx", "default"]
-                ]
+            if ((all_route_params or route.body_field)) and all(
+                status not in operation["responses"]
+                for status in [http422, "4xx", "default"]
             ):
                 operation["responses"][http422] = {
                     "description": "Validation Error",
@@ -233,12 +230,11 @@ def get_openapi_path(
                     },
                 }
                 if "ValidationError" not in definitions:
-                    definitions.update(
-                        {
-                            "ValidationError": validation_error_definition,
-                            "HTTPValidationError": validation_error_response_definition,
-                        }
-                    )
+                    definitions |= {
+                        "ValidationError": validation_error_definition,
+                        "HTTPValidationError": validation_error_response_definition,
+                    }
+
             path[method.lower()] = operation
     return path, security_schemes, definitions
 
@@ -265,8 +261,9 @@ def get_openapi(
     )
     for route in routes:
         if isinstance(route, routing.APIRoute):
-            result = get_openapi_path(route=route, model_name_map=model_name_map)
-            if result:
+            if result := get_openapi_path(
+                route=route, model_name_map=model_name_map
+            ):
                 path, security_schemes, path_definitions = result
                 if path:
                     paths.setdefault(openapi_prefix + route.path_format, {}).update(

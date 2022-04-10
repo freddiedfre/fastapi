@@ -27,10 +27,9 @@ def get_flat_models_from_routes(routes: Sequence[BaseRoute]) -> Set[Type[BaseMod
                 responses_from_routes.append(route.response_field)
             if route.response_fields:
                 responses_from_routes.extend(route.response_fields.values())
-    flat_models = get_flat_models_from_fields(
+    return get_flat_models_from_fields(
         body_fields_from_routes + responses_from_routes, known_models=set()
     )
-    return flat_models
 
 
 def get_model_definitions(
@@ -41,7 +40,7 @@ def get_model_definitions(
         m_schema, m_definitions, m_nested_models = model_process_schema(
             model, model_name_map=model_name_map, ref_prefix=REF_PREFIX
         )
-        definitions.update(m_definitions)
+        definitions |= m_definitions
         model_name = model_name_map[model]
         definitions[model_name] = m_schema
     return definitions
@@ -101,5 +100,5 @@ def create_cloned_field(field: Field) -> Field:
 def generate_operation_id_for_path(*, name: str, path: str, method: str) -> str:
     operation_id = name + path
     operation_id = operation_id.replace("{", "_").replace("}", "_").replace("/", "_")
-    operation_id = operation_id + "_" + method.lower()
+    operation_id = f'{operation_id}_{method.lower()}'
     return operation_id
