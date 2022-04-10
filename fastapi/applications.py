@@ -94,7 +94,7 @@ class FastAPI(Starlette):
             async def swagger_ui_html(req: Request) -> HTMLResponse:
                 return get_swagger_ui_html(
                     openapi_url=openapi_url,
-                    title=self.title + " - Swagger UI",
+                    title=f'{self.title} - Swagger UI',
                     oauth2_redirect_url=self.swagger_ui_oauth2_redirect_url,
                 )
 
@@ -113,9 +113,7 @@ class FastAPI(Starlette):
         if self.openapi_url and self.redoc_url:
 
             async def redoc_html(req: Request) -> HTMLResponse:
-                return get_redoc_html(
-                    openapi_url=openapi_url, title=self.title + " - ReDoc"
-                )
+                return get_redoc_html(openapi_url=openapi_url, title=f'{self.title} - ReDoc')
 
             self.add_route(self.redoc_url, redoc_html, include_in_schema=False)
         self.add_exception_handler(HTTPException, http_exception_handler)

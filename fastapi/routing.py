@@ -43,26 +43,25 @@ def serialize_response(
     by_alias: bool = True,
     skip_defaults: bool = False,
 ) -> Any:
-    if field:
-        errors = []
-        if skip_defaults and isinstance(response, BaseModel):
-            response = response.dict(skip_defaults=skip_defaults)
-        value, errors_ = field.validate(response, {}, loc=("response",))
-        if isinstance(errors_, ErrorWrapper):
-            errors.append(errors_)
-        elif isinstance(errors_, list):
-            errors.extend(errors_)
-        if errors:
-            raise ValidationError(errors, field.type_)
-        return jsonable_encoder(
-            value,
-            include=include,
-            exclude=exclude,
-            by_alias=by_alias,
-            skip_defaults=skip_defaults,
-        )
-    else:
+    if not field:
         return jsonable_encoder(response)
+    errors = []
+    if skip_defaults and isinstance(response, BaseModel):
+        response = response.dict(skip_defaults=skip_defaults)
+    value, errors_ = field.validate(response, {}, loc=("response",))
+    if isinstance(errors_, ErrorWrapper):
+        errors.append(errors_)
+    elif isinstance(errors_, list):
+        errors.extend(errors_)
+    if errors:
+        raise ValidationError(errors, field.type_)
+    return jsonable_encoder(
+        value,
+        include=include,
+        exclude=exclude,
+        by_alias=by_alias,
+        skip_defaults=skip_defaults,
+    )
 
 
 def get_app(
@@ -105,33 +104,34 @@ def get_app(
         values, errors, background_tasks, sub_response, _ = solved_result
         if errors:
             raise RequestValidationError(errors)
-        else:
-            assert dependant.call is not None, "dependant.call must be a function"
-            if is_coroutine:
-                raw_response = await dependant.call(**values)
-            else:
-                raw_response = await run_in_threadpool(dependant.call, **values)
-            if isinstance(raw_response, Response):
-                if raw_response.background is None:
-                    raw_response.background = background_tasks
-                return raw_response
-            response_data = serialize_response(
-                field=response_field,
-                response=raw_response,
-                include=response_model_include,
-                exclude=response_model_exclude,
-                by_alias=response_model_by_alias,
-                skip_defaults=response_model_skip_defaults,
-            )
-            response = response_class(
-                content=response_data,
-                status_code=status_code,
-                background=background_tasks,
-            )
-            response.headers.raw.extend(sub_response.headers.raw)
-            if sub_response.status_code:
-                response.status_code = sub_response.status_code
-            return response
+        assert dependant.call is not None, "dependant.call must be a function"
+        raw_response = (
+            await dependant.call(**values)
+            if is_coroutine
+            else await run_in_threadpool(dependant.call, **values)
+        )
+
+        if isinstance(raw_response, Response):
+            if raw_response.background is None:
+                raw_response.background = background_tasks
+            return raw_response
+        response_data = serialize_response(
+            field=response_field,
+            response=raw_response,
+            include=response_model_include,
+            exclude=response_model_exclude,
+            by_alias=response_model_by_alias,
+            skip_defaults=response_model_skip_defaults,
+        )
+        response = response_class(
+            content=response_data,
+            status_code=status_code,
+            background=background_tasks,
+        )
+        response.headers.raw.extend(sub_response.headers.raw)
+        if sub_response.status_code:
+            response.status_code = sub_response.status_code
+        return response
 
     return app
 
@@ -209,7 +209,7 @@ class APIRoute(routing.Route):
         self.path_regex, self.path_format, self.param_convertors = compile_path(path)
         if methods is None:
             methods = ["GET"]
-        self.methods = set([method.upper() for method in methods])
+        self.methods = {method.upper() for method in methods}
         self.unique_id = generate_operation_id_for_path(
             name=self.name, path=self.path_format, method=list(methods)[0]
         )
@@ -218,7 +218,7 @@ class APIRoute(routing.Route):
             assert lenient_issubclass(
                 response_class, JSONResponse
             ), "To declare a type the response must be a JSON response"
-            response_name = "Response_" + self.unique_id
+            response_name = f"Response_{self.unique_id}"
             self.response_field: Optional[Field] = Field(
                 name=response_name,
                 type_=self.response_model,
@@ -243,10 +243,7 @@ class APIRoute(routing.Route):
             self.secure_cloned_response_field = None
         self.status_code = status_code
         self.tags = tags or []
-        if dependencies:
-            self.dependencies = list(dependencies)
-        else:
-            self.dependencies = []
+        self.dependencies = list(dependencies) if dependencies else []
         self.summary = summary
         self.description = description or inspect.cleandoc(self.endpoint.__doc__ or "")
         self.response_description = response_description
@@ -254,8 +251,7 @@ class APIRoute(routing.Route):
         response_fields = {}
         for additional_status_code, response in self.responses.items():
             assert isinstance(response, dict), "An additional response must be a dict"
-            model = response.get("model")
-            if model:
+            if model := response.get("model"):
                 assert lenient_issubclass(
                     model, BaseModel
                 ), "A response model must be a Pydantic model"
@@ -270,10 +266,7 @@ class APIRoute(routing.Route):
                     schema=Schema(None),
                 )
                 response_fields[additional_status_code] = response_field
-        if response_fields:
-            self.response_fields: Dict[Union[int, str], Field] = response_fields
-        else:
-            self.response_fields = {}
+        self.response_fields = response_fields or {}
         self.deprecated = deprecated
         self.operation_id = operation_id
         self.response_model_include = response_model_include
@@ -285,7 +278,8 @@ class APIRoute(routing.Route):
 
         assert inspect.isfunction(endpoint) or inspect.ismethod(
             endpoint
-        ), f"An endpoint must be a function or method"
+        ), "An endpoint must be a function or method"
+
         self.dependant = get_dependant(path=self.path_format, call=self.endpoint)
         for depends in self.dependencies[::-1]:
             self.dependant.dependencies.insert(
@@ -454,8 +448,8 @@ class APIRouter(routing.Router):
         else:
             for r in router.routes:
                 path = getattr(r, "path")
-                name = getattr(r, "name", "unknown")
                 if path is not None and not path:
+                    name = getattr(r, "name", "unknown")
                     raise Exception(
                         f"Prefix and path cannot be both empty (path operation: {name})"
                     )
